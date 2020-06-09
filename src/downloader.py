@@ -25,23 +25,39 @@ def download_comic(job, config, mutex):
     global num_downloaded
 
     for comic in job:
+        if comic == 0 or comic == 404 or comic == 1608 or comic == 1663:
+            mutex.acquire()
+            config.set_succeeded(comic)
+            config.commit()
+            if num_downloadable - num_downloaded == 0:
+                percentage = 100
+            else:
+                num_downloaded = num_downloaded + 1
+                percentage = (num_downloaded / num_downloadable) * 100
+            print("{} Finished.".format(comic))
+            print("Progress: {}% ".format(round(percentage, 2)), end="\n")
+            mutex.release()
+            continue
+    
         mutex.acquire()
-        if num_downloadable - num_downloaded == 0:
-            percentage = 100
-        else:
-            num_downloaded = num_downloaded + 1
-            percentage = (num_downloaded / num_downloadable) * 100
-
-        print("Progress: {}% ".format(round(percentage, 2)), end="\r")
+        print("Retrieving file...")
         mutex.release()
 
         site = "http://xkcd.com/{}/info.0.json".format(comic)
         data = requests.get(site)
         if data.status_code != 200:
+            mutex.acquire()
+            print("{} Error 1. {}".format(comic, site))
+            mutex.release()
             continue
+            
         data = data.json()
-        if not re.search(r".jpg|.png$", data["img"]):
+        if not re.search(r".jpg|.png|.gif$", data["img"]):
+            mutex.acquire()
+            print("{} Error 2. {}".format(comic, data["img"]))
+            mutex.release()
             continue
+            
         months = {1: "January", 2: "February", 3: "March", 4: "April",
                   5: "May", 6: "June", 7: "July", 8: "August", 9: "September",
                   10: "October", 11: "November", 12: "December"}
@@ -54,16 +70,31 @@ def download_comic(job, config, mutex):
         title = re.sub(r"/|\\|\:|\*|\?|\"|<|>|\|", "", data["safe_title"])
         ext = data["img"][len(data["img"]) - 4:]
         name = "{}/{}-{}{}".format(newDir, comic, title, ext)
-        urllib.request.urlretrieve(data["img"], name)
-
+        
+        try:
+            urllib.request.urlretrieve(data["img"], name)
+        except:
+            print("Error in retrieving file.")
+            continue;
+            
+            
         mutex.acquire()
         config.set_succeeded(comic)
         config.commit()
+        if num_downloadable - num_downloaded == 0:
+            percentage = 100
+        else:
+            num_downloaded = num_downloaded + 1
+            percentage = (num_downloaded / num_downloadable) * 100
+        print("{} Finished.".format(comic))
+        print("Progress: {}% ".format(round(percentage, 2)), end="\n")
         mutex.release()
 
 
 def chunks(l, n):
-
+    if n <= 0:
+        n = 1
+        
     # Break list l as n sized lists.
     for i in range(0, len(l), n):
         # Create an index range for l of n items:
@@ -75,6 +106,7 @@ def chunks(l, n):
 @click.option('-v', '--verbose', is_flag=True)
 def main(directory, verbose):
     global num_downloadable
+    verbose = True
 
     num_cores = multiprocessing.cpu_count()
     config = Config(CONFIG_NAME)
